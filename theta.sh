@@ -1,77 +1,63 @@
 #!/bin/bash
 
-# 색깔 변수 정의
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m' # No Color
+# 색상 코드 선언
+RED="\e[31m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+CYAN="\e[36m"
+GREEN="\e[32m"
+MAGENTA="\e[35m"
+RESET="\e[0m"
 
-echo -e "${GREEN}Sonic 데일리 퀘스트 스크립트를 시작합니다...${NC}"
+echo -e "${GREEN}Theta edge node 설치를 시작합니다.${NC}"
 
-# 작업 디렉토리 설정
-work="/root/sonic-all"
-
-# 기존 작업 디렉토리가 존재하면 삭제
-if [ -d "$work" ]; then
-    echo -e "${YELLOW}작업 디렉토리 '${work}'가 이미 존재하므로 삭제합니다.${NC}"
-    rm -rf "$work"
+# Docker가 설치되어 있지 않으면 설치
+if ! command -v docker &> /dev/null; then
+    echo -e "${BLUE}Docker를 설치 중...${RESET}"
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
 fi
 
-# 파일 다운로드 및 덮어쓰기
-echo -e "${YELLOW}필요한 파일들을 다운로드합니다...${NC}"
+# 최신 Theta Edge Node Docker 이미지를 가져오기
+echo -e "${CYAN}최신 Theta Edge Node Docker 이미지를 가져오는 중...${RESET}"
+docker pull thetalabsorg/edgelauncher_mainnet:latest
 
-# Git 설치
-echo -e "${YELLOW}Git을 설치합니다...${NC}"
-sudo apt install -y git
+# 기존의 Theta Edge Node 컨테이너 중지 및 제거
+echo -e "${MAGENTA}기존 Theta Edge Node 컨테이너 중지 및 제거 중...${RESET}"
+docker rm -f edgelauncher &> /dev/null
 
-# 존재하는 파일을 삭제하고 다운로드
-echo -e "${YELLOW}Git 저장소 클론 중...${NC}"
-rm -rf ./*
-git clone https://github.com/KangJKJK/sonic-all
+# Theta Edge Node Docker 컨테이너 시작
+echo -e "${GREEN}Theta Edge Node Docker 컨테이너 시작 중...${RESET}"
+echo -ne "${YELLOW}Edge Node를 위한 보안 비밀번호를 입력하세요: ${RESET}"
+read -s PASSWORD
+echo
+docker run -d --restart=always -e EDGELAUNCHER_CONFIG_PATH=/edgelauncher/data/mainnet -e PASSWORD="$PASSWORD" -v ~/.edgelauncher:/edgelauncher/data/mainnet -p 127.0.0.1:15888:15888 -p 127.0.0.1:17888:17888 -p 127.0.0.1:17935:17935 --name edgelauncher thetalabsorg/edgelauncher_mainnet:latest
 
-# 작업 디렉토리 이동
-echo -e "${YELLOW}작업디렉토리를 이동합니다...${NC}"
-cd "$work"
+# Theta Edge Node에 대한 systemd 서비스 생성
+echo -e "${CYAN}Theta Edge Node에 대한 systemd 서비스를 생성하는 중...${RESET}"
+sudo tee /etc/systemd/system/theta_edge_node.service << EOF
+[Unit]
+Description=Theta Edge Node
+Requires=docker.service
+After=docker.service
 
-# npm 설치 여부 확인
-echo -e "${YELLOW}필요한 파일들을 설치합니다...${NC}"
-if ! command -v npm &> /dev/null; then
-    echo -e "${RED}npm이 설치되지 않았습니다. npm을 설치합니다...${NC}"
-    sudo apt-get update
-    sudo apt-get install -y npm
-else
-    echo -e "${GREEN}npm이 이미 설치되어 있습니다.${NC}"
-fi
+[Service]
+Restart=always
+RestartSec=30
+ExecStart=/usr/bin/docker start -a edgelauncher
+ExecStop=/usr/bin/docker stop -t 2 edgelauncher
 
-# Node.js 설치
-sudo apt-get update
-sudo apt-get clean
-sudo apt-get autoclean
-sudo apt-get autoremove -y
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
+[Install]
+WantedBy=multi-user.target
+EOF
 
-# Node.js 모듈 설치
-echo -e "${YELLOW}필요한 Node.js 모듈을 설치합니다...${NC}"
-npm install
-npm install @solana/web3.js chalk bs58
+# systemd를 다시 로드하여 변경 사항 적용
+echo -e "${BLUE}systemd를 다시 로드하는 중...${RESET}"
+sudo systemctl daemon-reload
 
-# 개인키 입력받기
-read -p "Solana의 개인키를 쉼표로 구분하여 입력하세요: " privkeys
-
-# 개인키를 파일에 저장
-echo "$privkeys" > "$work/private.txt"
-
-# 파일 생성 확인
-if [ -f "$work/private.txt" ]; then
-    echo -e "${GREEN}개인키 파일이 성공적으로 생성되었습니다.${NC}"
-else
-    echo -e "${RED}개인키 파일 생성에 실패했습니다.${NC}"
-fi
-
-# sonic.js 스크립트 실행
-echo -e "${GREEN}sonic.js 스크립트를 실행합니다...${NC}"
-node --no-deprecation sonic.js
+# 부팅 시 자동으로 시작되도록 systemd 서비스 활성화
+echo -e "${GREEN}systemd 서비스를 활성화하는 중...${RESET}"
+sudo systemctl enable theta_edge_node.service
 
 echo -e "${GREEN}모든 작업이 완료되었습니다. 컨트롤+A+D로 스크린을 종료해주세요.${NC}"
 echo -e "${GREEN}스크립트 작성자: https://t.me/kjkresearch${NC}"
